@@ -62,7 +62,7 @@ class detect_root_patch:
                 #             if "21A5506j" not in self.constants.detected_os_build:
                 #                 self.kepler_gpu = True
                 #                 self.supports_metal = True
-                elif gpu.arch in [device_probe.NVIDIA.Archs.Maxwell, device_probe.NVIDIA.Archs.Pascal]:
+                elif gpu.arch in [device_probe.NVIDIA.Archs.Kepler, device_probe.NVIDIA.Archs.Maxwell, device_probe.NVIDIA.Archs.Pascal]:
                     if self.constants.detected_os > os_data.os_data.mojave:
                         self.nvidia_web = True
                         self.amfi_must_disable = True
