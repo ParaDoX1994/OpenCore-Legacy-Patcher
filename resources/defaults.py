@@ -41,13 +41,7 @@ class generate_defaults:
                 settings.host_is_non_metal = True
             if settings.computer.gpus: 
                 for gpu in settings.computer.gpus:
-                    if gpu.arch == device_probe.NVIDIA.Archs.Kepler:
-                        # 12.0 (B7+): Kepler are now unsupported
-                        settings.sip_status = False
-                        settings.amfi_status = True
-                        settings.allow_fv_root = True  #  Allow FileVault on broken seal
-                        break
-                    elif gpu.arch in [device_probe.NVIDIA.Archs.Maxwell, device_probe.NVIDIA.Archs.Pascal]:
+                    if gpu.arch in [device_probe.NVIDIA.Archs.Maxwell, device_probe.NVIDIA.Archs.Pascal, device_probe.NVIDIA.Archs.Kepler]:
                         settings.custom_sip_value = "0xA03"
                         break
             if (
