@@ -2,6 +2,7 @@ import wx
 import logging
 import threading
 import webbrowser
+import locale
 
 from pathlib import Path
 
@@ -43,6 +44,24 @@ class macOSInstallerDownloadFrame(wx.Frame):
         self._generate_elements(self.frame_modal)
         self.frame_modal.ShowWindowModal()
 
+        self.icons = [[self._icon_to_bitmap(i), self._icon_to_bitmap(i, (64, 64))] for i in self.constants.icons_path]
+
+    def _icon_to_bitmap(self, icon: str, size: tuple = (32, 32)) -> wx.Bitmap:
+        """
+        Convert icon to bitmap
+        """
+        return wx.Bitmap(wx.Bitmap(icon, wx.BITMAP_TYPE_ICON).ConvertToImage().Rescale(size[0], size[1], wx.IMAGE_QUALITY_HIGH))
+    
+    def _macos_version_to_icon(self, version: int) -> int:
+        """
+        Convert macOS version to icon
+        """
+        try:
+            self.constants.icons_path[version - 19]
+            return version - 19
+        except IndexError:
+            return 0
+
 
     def _generate_elements(self, frame: wx.Frame = None) -> None:
         """
@@ -56,7 +75,7 @@ class macOSInstallerDownloadFrame(wx.Frame):
         frame = self if not frame else frame
 
         title_label = wx.StaticText(frame, label="Create macOS Installer", pos=(-1,5))
-        title_label.SetFont(wx.Font(19, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
+        title_label.SetFont(gui_support.font_factory(19, wx.FONTWEIGHT_BOLD))
         title_label.Centre(wx.HORIZONTAL)
 
         # Button: Download macOS Installer
@@ -87,8 +106,8 @@ class macOSInstallerDownloadFrame(wx.Frame):
         self.Centre()
 
         # Title: Pulling installer catalog
-        title_label = wx.StaticText(self, label="Pulling installer catalog", pos=(-1,5))
-        title_label.SetFont(wx.Font(19, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
+        title_label = wx.StaticText(self, label="Finding Available Software", pos=(-1,5))
+        title_label.SetFont(gui_support.font_factory(19, wx.FONTWEIGHT_BOLD))
         title_label.Centre(wx.HORIZONTAL)
 
         # Progress bar
@@ -124,115 +143,186 @@ class macOSInstallerDownloadFrame(wx.Frame):
         """
         Display available installers in frame
         """
+        
+
+        bundles = [wx.BitmapBundle.FromBitmaps(icon) for icon in self.icons]
+        
         self.frame_modal.Destroy()
-        dialog = wx.Dialog(self, title="Select macOS Installer", size=(300, 200))
+        self.frame_modal = wx.Dialog(self, title="Select macOS Installer", size=(460, 500))
 
         # Title: Select macOS Installer
-        title_label = wx.StaticText(dialog, label="Select macOS Installer", pos=(-1,5))
-        title_label.SetFont(wx.Font(19, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
-        title_label.Centre(wx.HORIZONTAL)
+        title_label = wx.StaticText(self.frame_modal, label="Select macOS Installer", pos=(-1,-1))
+        title_label.SetFont(gui_support.font_factory(19, wx.FONTWEIGHT_BOLD))
+        
+        # macOS Installers list
+        id = wx.NewIdRef()
+        
+        self.list = wx.ListCtrl(self.frame_modal, id, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.LC_NO_HEADER | wx.BORDER_SUNKEN)
+        self.list.SetSmallImages(bundles)
 
-        # Subtitle: Installers currently available from Apple:
-        subtitle_label = wx.StaticText(dialog, label="Installers currently available from Apple:", pos=(-1, title_label.GetPosition()[1] + title_label.GetSize()[1] + 5))
-        subtitle_label.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, False, ".AppleSystemUIFont"))
-        subtitle_label.Centre(wx.HORIZONTAL)
+        self.list.InsertColumn(0, "Version")
+        self.list.InsertColumn(1, "Size")
+        self.list.InsertColumn(2, "Release Date")
 
-        # List of installers
         installers = self.available_installers_latest if show_full is False else self.available_installers
+        if show_full is False:
+            self.frame_modal.SetSize((460, 370))
+
         if installers:
-            spacer = 0
+            locale.setlocale(locale.LC_TIME, '')
             logging.info(f"Available installers on SUCatalog ({'All entries' if show_full else 'Latest only'}):")
-            for app in installers:
-                logging.info(f"- macOS {installers[app]['Version']} ({installers[app]['Build']}):\n  - Size: {utilities.human_fmt(installers[app]['Size'])}\n  - Source: {installers[app]['Source']}\n  - Variant: {installers[app]['Variant']}\n  - Link: {installers[app]['Link']}\n")
-                extra = " Beta" if installers[app]['Variant'] in ["DeveloperSeed" , "PublicSeed"] else ""
-
-                installer_button = wx.Button(dialog, label=f"macOS {installers[app]['Version']}{extra} ({installers[app]['Build']} - {utilities.human_fmt(installers[app]['Size'])})", pos=(-1, subtitle_label.GetPosition()[1] + subtitle_label.GetSize()[1] + 5 + spacer), size=(270, 30))
-                installer_button.Bind(wx.EVT_BUTTON, lambda event, temp=app: self.on_download_installer(installers[temp]))
-                installer_button.Centre(wx.HORIZONTAL)
-                spacer += 25
-
-                # Since installers are sorted by version, set the latest installer as the default button
-                # Note that on full display, the last installer is generally a beta
-                if show_full is False and app == list(installers.keys())[-1]:
-                    installer_button.SetDefault()
+            for item in installers:
+                extra = " Beta" if installers[item]['Variant'] in ["DeveloperSeed" , "PublicSeed"] else ""
+                logging.info(f"- macOS {installers[item]['Version']} ({installers[item]['Build']}):\n  - Size: {utilities.human_fmt(installers[item]['Size'])}\n  - Source: {installers[item]['Source']}\n  - Variant: {installers[item]['Variant']}\n  - Link: {installers[item]['Link']}\n")
+                index = self.list.InsertItem(self.list.GetItemCount(), f"macOS {installers[item]['Version']} {os_data.os_conversion.convert_kernel_to_marketing_name(int(installers[item]['Build'][:2]))}{extra} ({installers[item]['Build']})")
+                self.list.SetItemImage(index, self._macos_version_to_icon(int(installers[item]['Build'][:2])))
+                self.list.SetItem(index, 1, utilities.human_fmt(installers[item]['Size']))
+                self.list.SetItem(index, 2, installers[item]['Date'].strftime("%x"))
         else:
             logging.error("No installers found on SUCatalog")
-            installer_button = wx.StaticText(dialog, label="Failed to fetch catalog from Apple", pos=(-1, subtitle_label.GetPosition()[1] + subtitle_label.GetSize()[1] + 5))
-            installer_button.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
-            installer_button.Centre(wx.HORIZONTAL)
+            wx.MessageDialog(self.frame_modal, "Failed to download Installer Catalog from Apple", "Error", wx.OK | wx.ICON_ERROR).ShowModal()
 
-        # Show all available installers
-        show_all_button = wx.Button(dialog, label="Show all available installers" if show_full is False else "Show only latest installers", pos=(-1, installer_button.GetPosition()[1] + installer_button.GetSize()[1]), size=(200, 30))
-        show_all_button.Bind(wx.EVT_BUTTON, lambda event: self._display_available_installers(event, not show_full))
-        show_all_button.Centre(wx.HORIZONTAL)
+        self.list.SetColumnWidth(0, 280)
+        self.list.SetColumnWidth(1, 65)
+        if show_full is True:
+            self.list.SetColumnWidth(2, 80)
+        else:
+            self.list.SetColumnWidth(2, 94) # Hack to get the highlight to fill the ListCtrl
 
-        # Return to Main Menu
-        return_button = wx.Button(dialog, label="Return to Main Menu", pos=(-1, show_all_button.GetPosition()[1] + show_all_button.GetSize()[1] - 7), size=(150, 30))
+        if show_full is False:
+            self.list.Select(-1)
+
+        self.list.Bind(wx.EVT_LIST_ITEM_DESELECTED, self.on_select_list)
+        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_select_list)
+
+        self.select_button = wx.Button(self.frame_modal, label="Download", pos=(-1, -1), size=(150, -1))
+        self.select_button.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
+        self.select_button.Bind(wx.EVT_BUTTON, lambda event, installers=installers: self.on_download_installer(installers))
+        self.select_button.SetToolTip("Download the selected macOS Installer.")
+        self.select_button.SetDefault()
+        if show_full is True:
+            self.select_button.Disable()
+
+        self.copy_button = wx.Button(self.frame_modal, label="Copy Link", pos=(-1, -1), size=(80, -1))
+        self.copy_button.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
+        if show_full is True:
+            self.copy_button.Disable()
+        self.copy_button.SetToolTip("Copy the download link of the selected macOS Installer.")
+        self.copy_button.Bind(wx.EVT_BUTTON, lambda event, installers=installers: self.on_copy_link(installers))
+
+        return_button = wx.Button(self.frame_modal, label="Return to Main Menu", pos=(-1, -1), size=(150, -1))
         return_button.Bind(wx.EVT_BUTTON, self.on_return_to_main_menu)
-        return_button.Centre(wx.HORIZONTAL)
+        return_button.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
 
-        # Set size of frame
-        dialog.SetSize((-1, return_button.GetPosition()[1] + return_button.GetSize()[1] + 40))
-        dialog.ShowWindowModal()
-        self.frame_modal = dialog
+        self.showolderversions_checkbox = wx.CheckBox(self.frame_modal, label="Show Older/Beta Versions", pos=(-1, -1))
+        if show_full is True:
+            self.showolderversions_checkbox.SetValue(True)
+        self.showolderversions_checkbox.Bind(wx.EVT_CHECKBOX, lambda event: self._display_available_installers(event, self.showolderversions_checkbox.GetValue()))
 
+        rectbox = wx.StaticBox(self.frame_modal, -1)
+        rectsizer = wx.StaticBoxSizer(rectbox, wx.HORIZONTAL)
+        rectsizer.Add(self.copy_button, 0, wx.EXPAND | wx.RIGHT, 5)
+        rectsizer.Add(self.select_button, 0, wx.EXPAND | wx.LEFT, 5)
 
-    def on_download_installer(self, app: dict) -> None:
+        checkboxsizer = wx.BoxSizer(wx.HORIZONTAL)
+        checkboxsizer.Add(self.showolderversions_checkbox, 0, wx.ALIGN_CENTRE | wx.RIGHT, 5)
+        
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.AddSpacer(10)
+        sizer.Add(title_label, 0, wx.ALIGN_CENTRE | wx.ALL, 0)
+        sizer.Add(self.list, 1, wx.EXPAND | wx.ALL, 10)
+        sizer.Add(rectsizer, 0, wx.ALIGN_CENTRE | wx.ALL, 0)
+        sizer.Add(checkboxsizer, 0, wx.ALIGN_CENTRE | wx.ALL, 15)
+        sizer.Add(return_button, 0, wx.ALIGN_CENTRE | wx.BOTTOM, 15)
+
+        self.frame_modal.SetSizer(sizer)
+        self.frame_modal.ShowWindowModal()
+
+    def on_copy_link(self, installers: dict) -> None:
+
+        selected_item = self.list.GetFirstSelected()
+        if selected_item != -1:
+            clipboard = wx.Clipboard.Get()
+
+            if not clipboard.IsOpened():
+                clipboard.Open()
+
+            clipboard.SetData(wx.TextDataObject(list(installers.values())[selected_item]['Link']))
+
+            clipboard.Close()
+
+            wx.MessageDialog(self.frame_modal, "Download link copied to clipboard", "", wx.OK | wx.ICON_INFORMATION).ShowModal()
+
+            
+    def on_select_list(self, event):
+        if self.list.GetSelectedItemCount() > 0:
+            self.select_button.Enable()
+            self.copy_button.Enable()  
+        else:
+            self.select_button.Disable()
+            self.copy_button.Disable()
+            
+    def on_download_installer(self, installers: dict) -> None:
         """
         Download macOS installer
         """
-        logging.info(f"Selected macOS {app['Version']} ({app['Build']})")
 
-        # Notify user whether their model is compatible with the selected installer
-        problems = []
-        model = self.constants.custom_model or self.constants.computer.real_model
-        if model in smbios_data.smbios_dictionary:
-            if app["OS"] >= os_data.os_data.ventura:
-                if smbios_data.smbios_dictionary[model]["CPU Generation"] <= cpu_data.CPUGen.penryn or model in ["MacPro4,1", "MacPro5,1", "Xserve3,1"]:
-                    if model.startswith("MacBook"):
-                        problems.append("Lack of internal Keyboard/Trackpad in macOS installer.")
-                    else:
-                        problems.append("Lack of internal Keyboard/Mouse in macOS installer.")
+        selected_item = self.list.GetFirstSelected()
+        if selected_item != -1:
 
-        if problems:
-            logging.warning(f"Potential issues with {model} and {app['Version']} ({app['Build']}): {problems}")
-            problems = "\n".join(problems)
-            dlg = wx.MessageDialog(self.frame_modal, f"Your model ({model}) may not be fully supported by this installer. You may encounter the following issues:\n\n{problems}\n\nFor more information, see associated page. Otherwise, we recommend using macOS Monterey", "Potential Issues", wx.YES_NO | wx.CANCEL | wx.ICON_WARNING)
-            dlg.SetYesNoCancelLabels("View Github Issue", "Download Anyways", "Cancel")
-            result = dlg.ShowModal()
-            if result == wx.ID_CANCEL:
+            logging.info(f"Selected macOS {list(installers.values())[selected_item]['Version']} ({list(installers.values())[selected_item]['Build']})")
+
+            # Notify user whether their model is compatible with the selected installer
+            problems = []
+            model = self.constants.custom_model or self.constants.computer.real_model
+            if model in smbios_data.smbios_dictionary:
+                if list(installers.values())[selected_item]["OS"] >= os_data.os_data.ventura:
+                    if smbios_data.smbios_dictionary[model]["CPU Generation"] <= cpu_data.CPUGen.penryn or model in ["MacPro4,1", "MacPro5,1", "Xserve3,1"]:
+                        if model.startswith("MacBook"):
+                            problems.append("Lack of internal Keyboard/Trackpad in macOS installer.")
+                        else:
+                            problems.append("Lack of internal Keyboard/Mouse in macOS installer.")
+
+            if problems:
+                logging.warning(f"Potential issues with {model} and {list(installers.values())[selected_item]['Version']} ({list(installers.values())[selected_item]['Build']}): {problems}")
+                problems = "\n".join(problems)
+                dlg = wx.MessageDialog(self.frame_modal, f"Your model ({model}) may not be fully supported by this installer. You may encounter the following issues:\n\n{problems}\n\nFor more information, see associated page. Otherwise, we recommend using macOS Monterey", "Potential Issues", wx.YES_NO | wx.CANCEL | wx.ICON_WARNING)
+                dlg.SetYesNoCancelLabels("View Github Issue", "Download Anyways", "Cancel")
+                result = dlg.ShowModal()
+                if result == wx.ID_CANCEL:
+                    return
+                elif result == wx.ID_YES:
+                    webbrowser.open("https://github.com/dortania/OpenCore-Legacy-Patcher/issues/1021")
+                    return
+
+            host_space = utilities.get_free_space()
+            needed_space = list(installers.values())[selected_item]['Size'] * 2
+            if host_space < needed_space:
+                logging.error(f"Insufficient space to download and extract: {utilities.human_fmt(host_space)} available vs {utilities.human_fmt(needed_space)} required")
+                dlg = wx.MessageDialog(self.frame_modal, f"You do not have enough free space to download and extract this installer. Please free up some space and try again\n\n{utilities.human_fmt(host_space)} available vs {utilities.human_fmt(needed_space)} required", "Insufficient Space", wx.OK | wx.ICON_WARNING)
+                dlg.ShowModal()
                 return
-            elif result == wx.ID_YES:
-                webbrowser.open("https://github.com/dortania/OpenCore-Legacy-Patcher/issues/1021")
+
+            self.frame_modal.Close()
+
+            download_obj = network_handler.DownloadObject(list(installers.values())[selected_item]['Link'], self.constants.payload_path / "InstallAssistant.pkg")
+
+            gui_download.DownloadFrame(
+                self,
+                title=self.title,
+                global_constants=self.constants,
+                download_obj=download_obj,
+                item_name=f"macOS {list(installers.values())[selected_item]['Version']} ({list(installers.values())[selected_item]['Build']})",
+                download_icon=self.constants.icons_path[self._macos_version_to_icon(int(list(installers.values())[selected_item]['Build'][:2]))]
+            )
+
+            if download_obj.download_complete is False:
+                self.on_return_to_main_menu()
                 return
 
-        host_space = utilities.get_free_space()
-        needed_space = app['Size'] * 2
-        if host_space < needed_space:
-            logging.error(f"Insufficient space to download and extract: {utilities.human_fmt(host_space)} available vs {utilities.human_fmt(needed_space)} required")
-            dlg = wx.MessageDialog(self.frame_modal, f"You do not have enough free space to download and extract this installer. Please free up some space and try again\n\n{utilities.human_fmt(host_space)} available vs {utilities.human_fmt(needed_space)} required", "Insufficient Space", wx.OK | wx.ICON_WARNING)
-            dlg.ShowModal()
-            return
+            self._validate_installer(list(installers.values())[selected_item]['integrity'])
 
-        self.frame_modal.Close()
-
-        download_obj = network_handler.DownloadObject(app['Link'], self.constants.payload_path / "InstallAssistant.pkg")
-
-        gui_download.DownloadFrame(
-            self,
-            title=self.title,
-            global_constants=self.constants,
-            download_obj=download_obj,
-            item_name=f"macOS {app['Version']} ({app['Build']})",
-        )
-
-        if download_obj.download_complete is False:
-            self.on_return_to_main_menu()
-            return
-
-        self._validate_installer(app['integrity'])
-
-
+        
     def _validate_installer(self, chunklist_link: str) -> None:
         """
         Validate macOS installer
@@ -243,12 +333,12 @@ class macOSInstallerDownloadFrame(wx.Frame):
 
         # Title: Validating macOS Installer
         title_label = wx.StaticText(self, label="Validating macOS Installer", pos=(-1,5))
-        title_label.SetFont(wx.Font(19, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
+        title_label.SetFont(gui_support.font_factory(19, wx.FONTWEIGHT_BOLD))
         title_label.Centre(wx.HORIZONTAL)
 
         # Label: Validating chunk 0 of 0
         chunk_label = wx.StaticText(self, label="Validating chunk 0 of 0", pos=(-1, title_label.GetPosition()[1] + title_label.GetSize()[1] + 5))
-        chunk_label.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, False, ".AppleSystemUIFont"))
+        chunk_label.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
         chunk_label.Centre(wx.HORIZONTAL)
 
         # Progress bar

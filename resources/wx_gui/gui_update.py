@@ -48,10 +48,8 @@ class UpdateFrame(wx.Frame):
         if url == "" or version_label == "":
             dict = updates.CheckBinaryUpdates(self.constants).check_binary_updates()
             if dict:
-                for key in dict:
-                    version_label = dict[key]["Version"]
-                    url = dict[key]["Link"]
-                    break
+                version_label = dict["Version"]
+                url = dict["Link"]
             else:
                 wx.MessageBox("Failed to get update info", "Critical Error")
                 sys.exit(1)
@@ -72,7 +70,7 @@ class UpdateFrame(wx.Frame):
 
         # Title: Preparing update
         title_label = wx.StaticText(self.frame, label="Preparing download...", pos=(-1,1))
-        title_label.SetFont(wx.Font(19, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
+        title_label.SetFont(gui_support.font_factory(19, wx.FONTWEIGHT_BOLD))
         title_label.Centre(wx.HORIZONTAL)
 
         # Progress bar
@@ -104,7 +102,8 @@ class UpdateFrame(wx.Frame):
             title=self.title,
             global_constants=self.constants,
             download_obj=download_obj,
-            item_name=f"OpenCore Patcher {version_label}"
+            item_name=f"OpenCore Patcher {version_label}",
+            download_icon=str(self.constants.app_icon_path)
         )
 
         if download_obj.download_complete is False:
@@ -144,17 +143,17 @@ class UpdateFrame(wx.Frame):
 
         # Label: 0.6.6 has been installed to:
         installed_label = wx.StaticText(self.frame, label=f"{version_label} has been installed:", pos=(-1, progress_bar.GetPosition().y - 15))
-        installed_label.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD, False, ".AppleSystemUIFont"))
+        installed_label.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_BOLD))
         installed_label.Centre(wx.HORIZONTAL)
 
         # Label: '/Library/Application Support/Dortania'
         installed_path_label = wx.StaticText(self.frame, label='/Library/Application Support/Dortania', pos=(-1, installed_label.GetPosition().y + 20))
-        installed_path_label.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, False, ".AppleSystemUIFont"))
+        installed_path_label.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
         installed_path_label.Centre(wx.HORIZONTAL)
 
         # Label: Launching update shortly...
         launch_label = wx.StaticText(self.frame, label="Launching update shortly...", pos=(-1, installed_path_label.GetPosition().y + 30))
-        launch_label.SetFont(wx.Font(13, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, False, ".AppleSystemUIFont"))
+        launch_label.SetFont(gui_support.font_factory(13, wx.FONTWEIGHT_NORMAL))
         launch_label.Centre(wx.HORIZONTAL)
 
         # Adjust frame size
@@ -177,7 +176,6 @@ class UpdateFrame(wx.Frame):
                 break
 
         sys.exit(0)
-
 
 
     def _extract_update(self) -> None:

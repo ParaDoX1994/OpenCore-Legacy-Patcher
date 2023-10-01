@@ -32,12 +32,13 @@
 # This is because Apple removed on-disk binaries (ref: https://github.com/dortania/OpenCore-Legacy-Patcher/issues/998)
 #   'sudo ditto /Library/Developer/KDKs/<KDK Version>/System /System/Volumes/Update/mnt1/System'
 
+import logging
 import plistlib
-import shutil
 import subprocess
+import applescript
+
 from pathlib import Path
 from datetime import datetime
-import logging
 
 from resources import constants, utilities, kdk_handler
 from resources.sys_patch import sys_patch_detect, sys_patch_auto, sys_patch_helpers, sys_patch_generate
@@ -66,7 +67,6 @@ class PatchSysVolume:
         self._init_pathing(custom_root_mount_path=None, custom_data_mount_path=None)
 
         self.skip_root_kmutil_requirement = self.hardware_details["Settings: Supports Auxiliary Cache"]
-
 
     def _init_pathing(self, custom_root_mount_path: Path = None, custom_data_mount_path: Path = None) -> None:
         """
@@ -280,6 +280,8 @@ class PatchSysVolume:
                 if self.needs_kmutil_exemptions is True:
                     logging.info("Note: Apple will require you to open System Preferences -> Security to allow the new kernel extensions to be loaded")
                 self.constants.root_patcher_succeeded = True
+                return True
+        return False
 
 
     def _rebuild_kernel_collection(self) -> bool:
@@ -418,9 +420,11 @@ class PatchSysVolume:
         """
         Unmount root volume
         """
-
-        logging.info("- Unmounting Root Volume (Don't worry if this fails)")
-        utilities.elevated(["diskutil", "unmount", self.root_mount_path], stdout=subprocess.PIPE).stdout.decode().strip().encode()
+        if self.root_mount_path:
+            logging.info("- Unmounting Root Volume (Don't worry if this fails)")
+            utilities.elevated(["diskutil", "unmount", self.root_mount_path], stdout=subprocess.PIPE).stdout.decode().strip().encode()
+        else:
+            logging.info("- Skipping Root Volume unmount")
 
 
     def _rebuild_dyld_shared_cache(self) -> None:
@@ -493,7 +497,7 @@ class PatchSysVolume:
             oclp_plist_data = plistlib.load(Path(oclp_path).open("rb"))
             for key in oclp_plist_data:
                 if isinstance(oclp_plist_data[key], (bool, int)):
-                     continue
+                    continue
                 if "Install" not in oclp_plist_data[key]:
                     continue
                 for location in oclp_plist_data[key]["Install"]:
@@ -864,6 +868,75 @@ class PatchSysVolume:
                 return False
 
             logging.info("- Mounted Universal-Binaries.dmg")
+            if self.constants.cli_mode is False and Path(self.constants.overlay_psp_path_dmg).exists() and Path("~/.dortania_developer").expanduser().exists():
+                icon_path = str(self.constants.app_icon_path).replace("/", ":")[1:]
+                msg = "Welcome to the DortaniaInternal Program, please provided the decryption key to access internal resources. Press cancel to skip."
+                password = Path("~/.dortania_developer_key").expanduser().read_text().strip() if Path("~/.dortania_developer_key").expanduser().exists() else ""
+                for i in range(3):
+                    try:
+                        if password == "":
+                            password = applescript.AppleScript(
+                                f"""
+                                set theResult to display dialog "{msg}" default answer "" with hidden answer with title "OpenCore Legacy Patcher" with icon file "{icon_path}"
+
+                                return the text returned of theResult
+                                """
+                            ).run()
+
+                        result = subprocess.run(
+                            [
+                                "hdiutil", "attach", "-noverify", f"{self.constants.overlay_psp_path_dmg}",
+                                "-mountpoint", Path(self.constants.payload_path / Path("DortaniaInternal")),
+                                "-nobrowse",
+                                "-passphrase", password
+                            ],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                        )
+                        if result.returncode == 0:
+                            logging.info("- Mounted DortaniaInternal resources")
+                            result = subprocess.run(
+                                [
+                                    "ditto", f"{self.constants.payload_path / Path('DortaniaInternal')}", f"{self.constants.payload_path / Path('Universal-Binaries')}"
+                                ],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                            )
+                            if result.returncode == 0:
+                                return True
+
+                            logging.info("- Failed to merge DortaniaInternal resources")
+                            logging.info(f"Output: {result.stdout.decode()}")
+                            logging.info(f"Return Code: {result.returncode}")
+                            return False
+
+                        logging.info("- Failed to mount DortaniaInternal resources")
+                        logging.info(f"Output: {result.stdout.decode()}")
+                        logging.info(f"Return Code: {result.returncode}")
+
+                        if "Authentication error" not in result.stdout.decode():
+                            try:
+                                # Display that the disk image might be corrupted
+                                applescript.AppleScript(
+                                    f"""
+                                    display dialog "Failed to mount DortaniaInternal resources, please file an internal radar:\n\n{result.stdout.decode()}" with title "OpenCore Legacy Patcher" with icon file "{icon_path}"
+                                    """
+                                ).run()
+                                return False
+                            except Exception as e:
+                                pass
+                            break
+                        msg = f"Decryption failed, please try again. {2 - i} attempts remaining. "
+                        password = ""
+
+                        if i == 2:
+                            applescript.AppleScript(
+                                f"""
+                                display dialog "Failed to mount DortaniaInternal resources, too many incorrect passwords. If this continues with the correct decryption key, please file an internal radar." with title "OpenCore Legacy Patcher" with icon file "{icon_path}"
+                                """
+                            ).run()
+                            return False
+                    except Exception as e:
+                        break
+
             return True
 
         logging.info("- PatcherSupportPkg resources missing, Patcher likely corrupted!!!")

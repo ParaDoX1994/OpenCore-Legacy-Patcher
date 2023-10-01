@@ -49,17 +49,12 @@ class GenerateDefaults:
         self._networking_probe()
         self._misc_hardwares_probe()
         self._smbios_probe()
-
+        self._check_amfipass_supported()
 
     def _general_probe(self) -> None:
         """
         General probe for data
         """
-
-        if "Book" in self.model:
-            self.constants.set_content_caching = False
-        else:
-            self.constants.set_content_caching = True
 
         if self.model in ["MacBookPro8,2", "MacBookPro8,3"]:
             # Users disabling TS2 most likely have a faulty dGPU
@@ -152,8 +147,11 @@ class GenerateDefaults:
         Networking specific probe
         """
 
+        is_legacy_wifi = False
+        is_modern_wifi = False
+
         if self.host_is_target:
-            if not (
+            if (
                 (
                     isinstance(self.constants.computer.wifi, device_probe.Broadcom) and
                     self.constants.computer.wifi.chipset in [
@@ -165,28 +163,54 @@ class GenerateDefaults:
                     self.constants.computer.wifi.chipset == device_probe.Atheros.Chipsets.AirPortAtheros40
                 )
             ):
-                return
+                is_legacy_wifi = True
+            elif (
+                (
+                    isinstance(self.constants.computer.wifi, device_probe.Broadcom) and
+                    self.constants.computer.wifi.chipset in [
+                        device_probe.Broadcom.Chipsets.AirPortBrcm4360,
+                        device_probe.Broadcom.Chipsets.AirportBrcmNIC,
+                    ]
+                )
+            ):
+                is_modern_wifi = True
 
         else:
-            if not self.model in smbios_data.smbios_dictionary:
+            print("Checking WiFi")
+            if self.model not in smbios_data.smbios_dictionary:
                 return
             if (
-                smbios_data.smbios_dictionary[self.model]["Wireless Model"] not in [
+                smbios_data.smbios_dictionary[self.model]["Wireless Model"] in [
                     device_probe.Broadcom.Chipsets.AirPortBrcm4331,
                     device_probe.Broadcom.Chipsets.AirPortBrcm43224,
-                    device_probe.Atheros.Chipsets.AirPortAtheros40
+                    device_probe.Atheros.Chipsets.AirPortAtheros40,
                 ]
             ):
-                return
+                is_legacy_wifi = True
+            elif (
+                    smbios_data.smbios_dictionary[self.model]["Wireless Model"] in [
+                    device_probe.Broadcom.Chipsets.AirPortBrcm4360,
+                    device_probe.Broadcom.Chipsets.AirportBrcmNIC,
+                ]
+            ):
+                print("Modern WiFi")
+                is_modern_wifi = True
+
+        if is_legacy_wifi is False and is_modern_wifi is False:
+            return
 
         # 12.0: Legacy Wireless chipsets require root patching
+        # 14.0: Modern Wireless chipsets require root patching
         self.constants.sip_status = False
         self.constants.secure_status = False
+        self.constants.disable_cs_lv = True
+        self.constants.disable_amfi = True
 
-        # 13.0: Enabling AirPlay to Mac patches breaks Control Center on legacy chipsets
-        # AirPlay to Mac was unsupported regardless, so we can safely disable it
-        self.constants.fu_status = True
-        self.constants.fu_arguments = " -disable_sidecar_mac"
+        if is_legacy_wifi is True:
+            # 13.0: Enabling AirPlay to Mac patches breaks Control Center on legacy chipsets
+            # AirPlay to Mac was unsupported regardless, so we can safely disable it
+            self.constants.fu_status = True
+            self.constants.fu_arguments = " -disable_sidecar_mac"
 
 
     def _misc_hardwares_probe(self) -> None:
@@ -303,8 +327,36 @@ class GenerateDefaults:
                     # Only disable AMFI if we officially support Ventura
                     self.constants.disable_amfi = True
 
-                for key in ["Moraea_BlurBeta", "Amy.MenuBar2Beta"]:
+                for key in ["Moraea_BlurBeta"]:
                     # Enable BetaBlur if user hasn't disabled it
                     is_key_enabled = subprocess.run(["defaults", "read", "-g", key], stdout=subprocess.PIPE).stdout.decode("utf-8").strip()
                     if is_key_enabled not in ["false", "0"]:
                         subprocess.run(["defaults", "write", "-g", key, "-bool", "true"])
+
+    def _check_amfipass_supported(self) -> None:
+        """
+        Check if root volume supports AMFIPass
+
+        The basic requirements of this function are:
+        - The host is the target
+        - Root volume doesn't have adhoc signed binaries
+
+        If all of these conditions are met, it is safe to disable AMFI and CS_LV. Otherwise, for safety, leave it be.
+        """
+
+        if not self.host_is_target:
+            # Unknown whether the host is using old binaries
+            # Rebuild it once you are on the host
+            return
+
+        # Check for adhoc signed binaries
+        if self.constants.computer.oclp_sys_signed is False:
+            # Root patch with new binaries, then reboot
+            return
+
+        # Note: simply checking the authority is not enough, as the authority can be spoofed
+        # (but do we really care? this is just a simple check)
+        # Note: the cert will change
+
+        self.constants.disable_amfi = False
+        self.constants.disable_cs_lv = False

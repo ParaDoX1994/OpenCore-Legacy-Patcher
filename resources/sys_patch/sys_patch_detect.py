@@ -3,26 +3,16 @@
 # Used when supplying data to sys_patch.py
 # Copyright (C) 2020-2022, Dhinak G, Mykola Grymalyuk
 
-import plistlib
 import logging
-import py_sip_xnu
+import plistlib
 from pathlib import Path
 
-from resources import (
-    constants,
-    device_probe,
-    utilities,
-    amfi_detect,
-    network_handler,
-    kdk_handler
-)
-from data import (
-    model_array,
-    os_data,
-    sip_data,
-    smbios_data,
-    cpu_data
-)
+import packaging.version
+import py_sip_xnu
+
+from data import cpu_data, model_array, os_data, sip_data, smbios_data
+from resources import (amfi_detect, constants, device_probe, kdk_handler,
+                       network_handler, utilities)
 
 
 class DetectRootPatch:
@@ -50,6 +40,7 @@ class DetectRootPatch:
         self.broadwell_gpu  = False
         self.skylake_gpu    = False
         self.legacy_gcn     = False
+        self.legacy_gcn_v2  = False
         self.legacy_polaris = False
         self.legacy_vega    = False
 
@@ -57,9 +48,11 @@ class DetectRootPatch:
         self.brightness_legacy         = False
         self.legacy_audio              = False
         self.legacy_wifi               = False
+        self.modern_wifi               = False
         self.legacy_gmux               = False
         self.legacy_keyboard_backlight = False
         self.legacy_uhci_ohci          = False
+        self.legacy_pcie_webcam        = False
 
         # Patch Requirements
         self.amfi_must_disable   = False
@@ -76,6 +69,7 @@ class DetectRootPatch:
         self.dosdude_patched = False
         self.missing_kdk     = False
         self.has_network     = False
+        self.unsupported_os  = False
 
         self.missing_whatever_green = False
         self.missing_nv_web_nvram   = False
@@ -165,12 +159,20 @@ class DetectRootPatch:
                             # full compatibility (namely power states, etc)
                             # Reference: https://github.com/dortania/bugtracker/issues/292
                             # TODO: Probe framebuffer families further
-                            if self.model != "MacBookPro13,3":
+                            # Sonoma note: MacBookPro14,3 has the same issue...
+                            # iMac18,2/3 is partially affected, however currently it seems the generic framebuffer
+                            # is sufficient. Only MacBookPro14,3 needs this for dGPU handling
+                            if self.model not in ["MacBookPro13,3", "MacBookPro14,3"]:
                                 if "AVX2" in self.constants.computer.cpu.leafs:
                                     continue
                                 self.legacy_polaris = True
                             else:
-                                self.legacy_gcn = True
+                                if self.model == "MacBookPro13,3":
+                                    self.legacy_gcn = True
+                                elif self.model == "MacBookPro14,3":
+                                    if self.constants.detected_os < os_data.os_data.sonoma:
+                                        continue
+                                    self.legacy_gcn_v2 = True
                         else:
                             self.legacy_gcn = True
                         self.supports_metal = True
@@ -226,6 +228,9 @@ class DetectRootPatch:
                         self.skylake_gpu = True
                         self.amfi_must_disable = True
                         self.supports_metal = True
+
+
+
         if self.supports_metal is True:
             # Avoid patching Metal and non-Metal GPUs if both present, prioritize Metal GPU
             # Main concerns are for iMac12,x with Sandy iGPU and Kepler dGPU
@@ -237,7 +242,7 @@ class DetectRootPatch:
             self.sandy_gpu = False
             self.legacy_keyboard_backlight = False
 
-        if self.legacy_gcn is True:
+        if self.legacy_gcn is True or self.legacy_gcn_v2 is True:
             # We can only support one or the other due to the nature of relying
             # on portions of the native AMD stack for Polaris and Vega
             # Thus we'll prioritize legacy GCN due to being the internal card
@@ -252,7 +257,6 @@ class DetectRootPatch:
             if self.requires_root_kc is True:
                 self.missing_kdk = not self._check_kdk()
 
-        self._check_networking_support()
 
 
     def _check_networking_support(self):
@@ -266,9 +270,10 @@ class DetectRootPatch:
         On subsequent runs, we'll require networking to be enabled.
         """
 
-        if self.constants.detected_os < os_data.os_data.ventura:
+        # Increase OS check if modern wifi is detected
+        if self.constants.detected_os < (os_data.os_data.ventura if self.legacy_wifi is True else os_data.os_data.sonoma):
             return
-        if self.legacy_wifi is False:
+        if self.legacy_wifi is False and self.modern_wifi is False:
             return
         if self.requires_root_kc is False:
             return
@@ -282,7 +287,7 @@ class DetectRootPatch:
         oclp_patch_path = "/System/Library/CoreServices/OpenCore-Legacy-Patcher.plist"
         if Path(oclp_patch_path).exists():
             oclp_plist = plistlib.load(open(oclp_patch_path, "rb"))
-            if "Legacy Wireless" in oclp_plist:
+            if "Legacy Wireless" in oclp_plist or "Modern Wireless" in oclp_plist:
                 return
 
         # Due to the reliance of KDKs for most older patches, we'll allow KDK-less
@@ -298,12 +303,21 @@ class DetectRootPatch:
         self.iron_gpu                  = False
         self.sandy_gpu                 = False
         self.legacy_gcn                = False
+        self.legacy_gcn_v2             = False
         self.legacy_polaris            = False
         self.legacy_vega               = False
         self.brightness_legacy         = False
         self.legacy_audio              = False
         self.legacy_gmux               = False
         self.legacy_keyboard_backlight = False
+
+        # Currently all graphics patches require a KDK
+        if self.constants.detected_os >= os_data.os_data.sonoma:
+            self.kepler_gpu     = False
+            self.ivy_gpu        = False
+            self.haswell_gpu    = False
+            self.broadwell_gpu  = False
+            self.skylake_gpu    = False
 
 
     def _check_dgpu_status(self):
@@ -418,7 +432,18 @@ class DetectRootPatch:
             bool: True if loaded, False otherwise
         """
 
-        return utilities.check_kext_loaded("WhateverGreen", self.constants.detected_os)
+        return utilities.check_kext_loaded("as.vit9696.WhateverGreen")
+
+
+    def _check_os_compat(self) -> bool:
+        """
+        Base check to ensure patcher is compatible with host OS
+        """
+        min_os = os_data.os_data.big_sur
+        max_os = os_data.os_data.sonoma
+        if self.constants.detected_os < min_os or self.constants.detected_os > max_os:
+            return False
+        return True
 
 
     def _check_kdk(self):
@@ -491,11 +516,11 @@ class DetectRootPatch:
             return False
 
         # If we're on a Mac, check for Penryn or older
-        # This is due to Apple implementing an internal USB hub on post-Penryn (excluding MacPro4,1 and MacPro5,1)
+        # This is due to Apple implementing an internal USB hub on post-Penryn (excluding MacPro4,1, MacPro5,1 and Xserve3,1)
         # Ref: https://techcommunity.microsoft.com/t5/microsoft-usb-blog/reasons-to-avoid-companion-controllers/ba-p/270710
         if (
             smbios_data.smbios_dictionary[self.model]["CPU Generation"] <= cpu_data.CPUGen.penryn.value or \
-            self.model in ["MacPro4,1", "MacPro5,1"]
+            self.model in ["MacPro4,1", "MacPro5,1", "Xserve3,1"]
         ):
             return True
 
@@ -513,6 +538,8 @@ class DetectRootPatch:
 
         self.has_network = network_handler.NetworkUtilities().verify_network_connection()
 
+        self.legacy_pcie_webcam = self.constants.computer.pcie_webcam
+
         if self._check_uhci_ohci() is True:
             self.legacy_uhci_ohci = True
             self.requires_root_kc = True
@@ -521,7 +548,7 @@ class DetectRootPatch:
             if self.constants.detected_os > os_data.os_data.catalina:
                 self.brightness_legacy = True
 
-        if self.model in ["iMac7,1", "iMac8,1"] or (self.model in model_array.LegacyAudio and utilities.check_kext_loaded("AppleALC", self.constants.detected_os) is False):
+        if self.model in ["iMac7,1", "iMac8,1"] or (self.model in model_array.LegacyAudio and utilities.check_kext_loaded("as.vit9696.AppleALC") is False):
             # Special hack for systems with botched GOPs
             # TL;DR: No Boot Screen breaks Lilu, therefore breaking audio
             if self.constants.detected_os > os_data.os_data.catalina:
@@ -536,6 +563,20 @@ class DetectRootPatch:
                 if self.constants.detected_os >= os_data.os_data.ventura:
                     # Due to extracted frameworks for IO80211.framework and co, check library validation
                     self.amfi_must_disable = True
+                    if self.constants.detected_os > os_data.os_data.ventura:
+                        self.amfi_shim_bins = True
+
+        if (
+            isinstance(self.constants.computer.wifi, device_probe.Broadcom)
+            and self.constants.computer.wifi.chipset in [
+                device_probe.Broadcom.Chipsets.AirPortBrcm4360,
+                device_probe.Broadcom.Chipsets.AirportBrcmNIC,
+                # We don't officially support this chipset, however we'll throw a bone to hackintosh users
+                device_probe.Broadcom.Chipsets.AirPortBrcmNICThirdParty,
+            ]):
+            if self.constants.detected_os > os_data.os_data.ventura:
+                self.modern_wifi = True
+                self.amfi_shim_bins = True
 
         # if self.model in ["MacBookPro5,1", "MacBookPro5,2", "MacBookPro5,3", "MacBookPro8,2", "MacBookPro8,3"]:
         if self.model in ["MacBookPro8,2", "MacBookPro8,3"]:
@@ -552,6 +593,9 @@ class DetectRootPatch:
                     self.legacy_gmux = True
 
         self._detect_gpus()
+        # This must be performed last, as it may override previous decisions
+        # Namely, whether we allow patches requiring KDKs
+        self._check_networking_support()
 
         self.root_patch_dict = {
             "Graphics: Nvidia Tesla":                      self.nvidia_tesla,
@@ -560,6 +604,7 @@ class DetectRootPatch:
             "Graphics: AMD TeraScale 1":                   self.amd_ts1,
             "Graphics: AMD TeraScale 2":                   self.amd_ts2,
             "Graphics: AMD Legacy GCN":                    self.legacy_gcn,
+            "Graphics: AMD Legacy GCN (2017)":             self.legacy_gcn_v2,
             "Graphics: AMD Legacy Polaris":                self.legacy_polaris,
             "Graphics: AMD Legacy Vega":                   self.legacy_vega,
             "Graphics: Intel Ironlake":                    self.iron_gpu,
@@ -571,15 +616,17 @@ class DetectRootPatch:
             "Brightness: Legacy Backlight Control":        self.brightness_legacy,
             "Audio: Legacy Realtek":                       self.legacy_audio,
             "Networking: Legacy Wireless":                 self.legacy_wifi,
+            "Networking: Modern Wireless":                 self.modern_wifi,
             "Miscellaneous: Legacy GMUX":                  self.legacy_gmux,
             "Miscellaneous: Legacy Keyboard Backlight":    self.legacy_keyboard_backlight,
             "Miscellaneous: Legacy USB 1.1":               self.legacy_uhci_ohci,
+            "Miscellaneous: PCIe FaceTime Camera":         self.legacy_pcie_webcam,
             "Settings: Requires AMFI exemption":           self.amfi_must_disable,
             "Settings: Supports Auxiliary Cache":          not self.requires_root_kc,
             "Settings: Kernel Debug Kit missing":          self.missing_kdk if self.constants.detected_os >= os_data.os_data.ventura.value else False,
             "Validation: Patching Possible":               self.verify_patch_allowed(),
             "Validation: Unpatching Possible":             self._verify_unpatch_allowed(),
-            f"Validation: Unsupported Host OS":            True if self.constants.detected_os > os_data.os_data.ventura and not Path("~/.dortania_developer").expanduser().exists() else False,
+            f"Validation: Unsupported Host OS":            self.unsupported_os,
             f"Validation: SIP is enabled (Required: {self._check_sip()[2]} or higher)":  self.sip_enabled,
             f"Validation: Currently Booted SIP: ({hex(py_sip_xnu.SipXnu().get_sip_status().value)})":         self.sip_enabled,
             "Validation: SecureBootModel is enabled":      self.sbm_enabled,
@@ -610,6 +657,12 @@ class DetectRootPatch:
         if self.constants.detected_os < os_data.os_data.big_sur:
             return amfi_detect.AmfiConfigDetectLevel.NO_CHECK
 
+        amfipass_version = utilities.check_kext_loaded("com.dhinakg.AMFIPass")
+        if amfipass_version:
+            if packaging.version.parse(amfipass_version) >= packaging.version.parse(self.constants.amfipass_compatibility_version):
+                # If AMFIPass is loaded, our binaries will work
+                return amfi_detect.AmfiConfigDetectLevel.NO_CHECK
+
         if self.constants.detected_os >= os_data.os_data.ventura:
             if self.amfi_shim_bins is True:
                 # Currently we require AMFI outright disabled
@@ -636,6 +689,8 @@ class DetectRootPatch:
 
         self.sip_enabled, self.sbm_enabled, self.fv_enabled, self.dosdude_patched = utilities.patching_status(sip, self.constants.detected_os)
         self.amfi_enabled = not amfi_detect.AmfiConfigurationDetection().check_config(self._get_amfi_level_needed())
+
+        self.unsupported_os = not self._check_os_compat()
 
         if self.nvidia_web is True:
             self.missing_nv_web_nvram   = not self._check_nv_web_nvram()
@@ -690,10 +745,14 @@ class DetectRootPatch:
                 logging.info("\nCannot patch! Network Connection Required")
                 logging.info("Please ensure you have an active internet connection")
 
+            if self.unsupported_os is True:
+                logging.info("\nCannot patch! Unsupported Host OS")
+                logging.info("Please ensure you are running a patcher-supported OS")
+
         if any(
             [
                 # General patch checks
-                self.sip_enabled, self.sbm_enabled, self.fv_enabled, self.dosdude_patched,
+                self.sip_enabled, self.sbm_enabled, self.fv_enabled, self.dosdude_patched, self.unsupported_os,
 
                 # non-Metal specific
                 self.amfi_enabled if self.amfi_must_disable is True else False,

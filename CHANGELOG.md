@@ -1,11 +1,60 @@
 # OpenCore Legacy Patcher changelog
 
+## 1.0.0
+- Resolve BCM2046 and BCM2070 support on macOS 13.3 and newer
+- Workaround 13.3+ Kernel Panic on AMD GCN GPUs playing DRM content
+- Add new macOS Installer download menu (Jazzzny)
+- Refresh download UI (Jazzzny)
+- Add support for Universal 2 distribution (x86_64 and ARM64)
+  - Drops Rosetta requirement on Apple Silicon Macs
+  - Note building from source will require Python 3.11 or newer and up-to-date Python modules
+- Update font handling code, fixing font issues on Yosemite and El Capitan
+- Add `OpenLegacyBoot.efi` for Macs with CSM
+  - Allows for booting CSM-based OSes (ex. Windows 7)
+  - Applicable for Ivy Bridge and older Macs (excluding MacPro6,1)
+- Resolve incorrect RELEASE usage of OpenCore binaries when DEBUG enabled
+- Implement basic support for macOS Sonoma:
+  - Supports same range of hardware as Ventura, in addition to:
+    - iMac18,x
+    - MacBook10,1
+    - MacBookPro14,x
+      - [T1 chip currently unsupported in Sonoma](https://github.com/dortania/OpenCore-Legacy-Patcher/issues/1103)
+  - Resolved issues:
+    - Graphics Acceleration support for 3802 and non-Metal GPUs
+    - UI corruption on 31001 GPUs
+    - Wireless Networking for BCM94360, 4360, 4350, 4331 and 43224
+    - USB ethernet support for adapters based on ECM protocol (ex. Realtek)
+    - dGPU support for MacBookPro14,3
+    - S1X/S3X NVMe Drive Support
+    - PCIe-based FaceTime Camera support
+    - Bluetooth support by switching to dynamic VMM spoofing
+- Increment Binaries:
+  - OpenCorePkg 0.9.3 - release
+  - Lilu 1.6.7 - release
+  - WhateverGreen 1.6.6 - release
+  - RestrictEvents 1.1.3 - (rolling - 4f233dd)
+  - FeatureUnlock 1.1.5 - release
+  - DebugEnhancer 1.0.8 - release
+  - CPUFriend 1.2.7 - release
+  - BlueToolFixup 2.6.8 - rolling (2305aaa)
+  - CryptexFixup 1.0.2 - release
+  - PatcherSupportPkg 1.3.0 - release
+- Build Server Changes:
+  - Upgrade Python backend to 3.11.5
+  - Upgrade Python modules:
+    - requests - 2.31.0
+    - pyobjc - 9.2
+    - wxpython - 4.2.1
+    - pyinstaller - 5.13.2
+    - packaging - 23.1
+
 ## 0.6.8
 - Update non-Metal Binaries:
   - Improve experimental Menubar implementation stability
   - Implement reduce transparency Menubar
   - Resolve Color Profile support and Black Box rendering issues on HD 3000 Macs
     - Drops ColorSync downgrade configuration option
+    - Resolves macOS 13.5 booting on HD 3000 Macs
 - Resolve app not updating in `/Applications` after an update
   - Work-around users manually copying app to `/Applications` instead of allowing Root Volume Patcher to create a proper alias
 - Add configuration for mediaanalysisd usage
@@ -13,6 +62,16 @@
   - Applicable to 3802-based GPUs (ie. Intel Ivy Bridge and Haswell iGPUs, Nvidia Kepler dGPUs)
 - Remove MacBook4,1 references
   - Machine was never properly supported by OCLP
+- Restore support for Aquantia Aqtion 10GBe Ethernet for Pre-VT-d systems on 12.3 and newer
+  - i.e. MacPro5,1 with AQC107 expansion card running macOS Ventura/Monterey 12.6.x
+  - Thanks [@jazzzny](https://github.com/jazzzny)
+- Resolve AMD Vega support on pre-AVX2 Macs in macOS Ventura
+  - Originally caused by regression from 0.6.2
+- Disable non-Metal's Menubar 2 configuration
+  - Can be manually re-enabled, however application will try to disable to prevent issues
+- Remove AppleGVA downgrade on Intel Skylake iGPUs
+- Implement AMFIPass system
+  - Removes need for disabling Library Validation and AMFI outright on all applicable systems
 - Backend Changes:
   - device_probe.py:
     - Add USB device parsing via `IOUSBDevice` class
@@ -22,7 +81,7 @@
   - utilities.py:
     - Fix indexing error on Device Paths (thx [@Ausdauersportler](https://github.com/Ausdauersportler))
 - Increment Binaries:
-  - PatcherSupportPkg 1.1.4 - release
+- PatcherSupportPkg 1.2.2 - release
 
 ## 0.6.7
 - Resolve partition buttons overlapping in Install OpenCore UI
