@@ -5,7 +5,7 @@ Here are some common errors that users may experience while using this patcher:
 * [OpenCore Legacy Patcher not launching](#opencore-legacy-patcher-not-launching)
 * [Stuck on `This version of Mac OS X is not supported on this platform` or (🚫) Prohibited Symbol](#stuck-on-this-version-of-mac-os-x-is-not-supported-on-this-platform-or-(🚫)-prohibited-symbol)
 * [Cannot boot macOS without the USB](#cannot-boot-macos-without-the-usb)
-* [Stuck on boot after root patching](stuck-on-boot-after-root-patching)
+* [Stuck on boot after root patching](#stuck-on-boot-after-root-patching)
 * [Infinite Recovery OS Booting](#infinite-recovery-os-reboot)
 * [Reboot when entering Hibernation (`Sleep Wake Failure`)](#reboot-when-entering-hibernation-sleep-wake-failure)
 * [How to Boot Recovery through OpenCore Legacy Patcher](#how-to-boot-recovery-through-opencore-legacy-patcher)
